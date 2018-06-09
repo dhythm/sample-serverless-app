@@ -1,0 +1,6 @@
+.DS_Store
+template-output.yaml
+
+serverless-spa/build/
+serverless-spa/static/
+serverless-spa/test/

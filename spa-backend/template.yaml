@@ -1,0 +1,377 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform:  'AWS::Serverless-2016-10-31'
+Description: ''
+Globals:
+  Function:
+    Runtime: python3.6
+    MemorySize: 128
+    Timeout: 15
+    Environment:
+      Variables:
+        BUCKET_NAME: !Ref S3Bucket
+        TABLE_NAME: !Ref DynamoDBTable
+Resources:
+  S3Bucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: 'serverless-app-photos-dhythm'
+      WebsiteConfiguration:
+        IndexDocument: index.html
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders:
+              - "*"
+            AllowedMethods:
+              - "GET"
+              - "PUT"
+              - "DELETE"
+              - "POST"
+              - "HEAD"
+            AllowedOrigins:
+              - "*"
+            MaxAge: 3000
+      # FAILED: Circular dependency between resources
+      # NotificationConfiguration:
+      #   LambdaConfigurations:
+      #     - Function: "arn:aws:lambda:ap-northeast-1:xxxxxxxxxxxx:function:serverless-app-rekognizeImages-xxxxxxxxxxxx"
+      #       Event: "s3:ObjectCreated:*"
+  S3BucketPolicy:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      Bucket: !Ref S3Bucket
+      PolicyDocument:
+        Statement:
+          -
+            Effect: "Allow"
+            Action: "s3:GetObject"
+            Principal: "*"
+            Resource: !Sub ${S3Bucket.Arn}/*
+  DynamoDBTable:
+    Type: 'AWS::DynamoDB::Table'
+    # Type: 'AWS::Serverless::SimpleTable'
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: photo_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: photo_id
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+  UserPool:
+    Type: 'AWS::Cognito::UserPool'
+    Properties:
+      Schema:
+        - Name: 'email'
+          StringAttributeConstraints:
+            MinLength: '0'
+            MaxLength: '2048'
+          Required: true
+          AttributeDataType: 'String'
+          Mutable: true
+      AliasAttributes: ['email']
+      AutoVerifiedAttributes: ['email']
+      EmailVerificationSubject: 'Your verification code'
+      EmailVerificationMessage: 'Your confirmation code is {####}.'
+      MfaConfiguration: 'OFF'
+      UserPoolName: !Ref AWS::StackName
+      Policies:
+        PasswordPolicy:
+          RequireLowercase: false
+          RequireSymbols: false
+          RequireNumbers: false
+          MinimumLength: 6
+          RequireUppercase: false
+  UserPoolClient:
+    Type: 'AWS::Cognito::UserPoolClient'
+    Properties:
+      ClientName: 'photo-app'
+      GenerateSecret: false
+      UserPoolId: !Ref UserPool
+
+  postImages:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      CodeUri: postImages/
+      Handler: post-images.lambda_handler
+      Description: ''
+      Role: !GetAtt IamRoleLambdaToDynamoDB.Arn
+  updateImage:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      CodeUri: updateImage/
+      Handler: update-image.lambda_handler
+      Runtime: python3.6
+      Description: ''
+      Role: !GetAtt IamRoleLambdaToDynamoDB.Arn
+  getImages:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      CodeUri: getImages/
+      Handler: get-images.lambda_handler
+      Description: ''
+      Timeout: 3
+      Role: !GetAtt IamRoleLambdaToDynamoDB.Arn
+  getImageById:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      CodeUri: getImageById/
+      Handler: get-image-by-id.lambda_handler
+      Description: ''
+      Timeout: 3
+      Role: !GetAtt IamRoleLambdaToDynamoDB.Arn
+  deleteImageById:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      CodeUri: deleteImageById/
+      Handler: delete-image-by-id.lambda_handler
+      Description: ''
+      Timeout: 3
+      Role: !GetAtt IamRoleLambdaToDynamoDB.Arn
+  rekognizeImages:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      CodeUri: rekognizeImages/
+      Handler: lambda_function.lambda_handler
+      Description: ''
+      Timeout: 300
+      Role: !GetAtt IamRoleLambdaToRekognition.Arn
+  Api:
+    Type: 'AWS::Serverless::Api'
+    Properties:
+      StageName: Prod
+      DefinitionBody:
+        swagger: "2.0"
+        info:
+          version: "1.0"
+          title: "serverless-app"
+        schemes:
+        - "https"
+        paths:
+          /images:
+            get:
+              responses: {}
+              security:
+              - Cognito_Custom_Authorizer: []
+              x-amazon-apigateway-integration:
+                uri: !Sub arn:aws:apigateway:ap-northeast-1:lambda:path/2015-03-31/functions/${getImages.Arn}/invocations
+                passthroughBehavior: "when_no_match"
+                httpMethod: "POST"
+                type: "aws_proxy"
+            post:
+              responses: {}
+              security:
+              - Cognito_Custom_Authorizer: []
+              x-amazon-apigateway-integration:
+                uri: !Sub arn:aws:apigateway:ap-northeast-1:lambda:path/2015-03-31/functions/${postImages.Arn}/invocations
+                passthroughBehavior: "when_no_match"
+                httpMethod: "POST"
+                type: "aws_proxy"
+            put:
+              responses: {}
+              security:
+              - Cognito_Custom_Authorizer: []
+              x-amazon-apigateway-integration:
+                uri: !Sub arn:aws:apigateway:ap-northeast-1:lambda:path/2015-03-31/functions/${updateImage.Arn}/invocations
+                passthroughBehavior: "when_no_match"
+                httpMethod: "POST"
+                type: "aws_proxy"
+            options:
+              consumes:
+                - application/json
+              produces:
+                - application/json
+              x-amazon-apigateway-integration:
+                type: mock
+                requestTemplates:
+                  application/json: |
+                    {
+                      "statusCode" : 200
+                    }
+                responses:
+                  "default":
+                    statusCode: "200"
+                    responseParameters:
+                      method.response.header.Access-Control-Allow-Headers : "'Content-Type,X-Amz-Date,Authorization,X-Api-Key'"
+                      method.response.header.Access-Control-Allow-Methods : "'GET, POST, PUT, DELETE'"
+                      method.response.header.Access-Control-Allow-Origin : "'*'"
+                    responseTemplates:
+                      application/json: |
+                        {}
+              responses:
+                "200":
+                  headers:
+                    Access-Control-Allow-Headers:
+                      type: "string"
+                    Access-Control-Allow-Methods:
+                      type: "string"
+                    Access-Control-Allow-Origin:
+                      type: "string"
+          /images/{id}:
+            get:
+              responses: {}
+              security:
+              - Cognito_Custom_Authorizer: []
+              x-amazon-apigateway-integration:
+                uri: !Sub arn:aws:apigateway:ap-northeast-1:lambda:path/2015-03-31/functions/${getImageById.Arn}/invocations
+                passthroughBehavior: "when_no_match"
+                httpMethod: "POST"
+                type: "aws_proxy"
+            delete:
+              responses: {}
+              security:
+              - Cognito_Custom_Authorizer: []
+              x-amazon-apigateway-integration:
+                uri: !Sub arn:aws:apigateway:ap-northeast-1:lambda:path/2015-03-31/functions/${deleteImageById.Arn}/invocations
+                passthroughBehavior: "when_no_match"
+                httpMethod: "POST"
+                type: "aws_proxy"
+            options:
+              consumes:
+                - application/json
+              produces:
+                - application/json
+              x-amazon-apigateway-integration:
+                type: mock
+                requestTemplates:
+                  application/json: |
+                    {
+                      "statusCode" : 200
+                    }
+                responses:
+                  "default":
+                    statusCode: "200"
+                    responseParameters:
+                      method.response.header.Access-Control-Allow-Headers : "'Content-Type,X-Amz-Date,Authorization,X-Api-Key'"
+                      method.response.header.Access-Control-Allow-Methods : "'GET, POST, PUT, DELETE'"
+                      method.response.header.Access-Control-Allow-Origin : "'*'"
+                    responseTemplates:
+                      application/json: |
+                        {}
+              responses:
+                "200":
+                  headers:
+                    Access-Control-Allow-Headers:
+                      type: "string"
+                    Access-Control-Allow-Methods:
+                      type: "string"
+                    Access-Control-Allow-Origin:
+                      type: "string"
+        securityDefinitions:
+          Cognito_Custom_Authorizer:
+            type: "apiKey"
+            name: "Authorization"
+            in: "header"
+            x-amazon-apigateway-authtype: "cognito_user_pools"
+            x-amazon-apigateway-authorizer:
+              providerARNs:
+              - !GetAtt UserPool.Arn
+              type: "cognito_user_pools"
+  getImagesPermission:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref getImages
+      Principal: apigateway.amazonaws.com
+  postImagesPermission:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref postImages
+      Principal: apigateway.amazonaws.com
+  updateImagePermission:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref updateImage
+      Principal: apigateway.amazonaws.com
+  getImageByIdPermission:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref getImageById
+      Principal: apigateway.amazonaws.com
+  deleteImageByIdPermission:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref deleteImageById
+      Principal: apigateway.amazonaws.com
+  rekognizeImagesPermission:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref rekognizeImages
+      Principal: s3.amazonaws.com
+      SourceArn: !GetAtt S3Bucket.Arn
+  IamRoleLambdaToDynamoDB:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: "sts:AssumeRole"
+      Policies:
+        -
+          PolicyName: "lambda-dynamodb-access"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "dynamodb:PutItem"
+                  - "dynamodb:DeleteItem"
+                  - "dynamodb:GetItem"
+                  - "dynamodb:Scan"
+                  - "dynamodb:UpdateItem"
+                Resource: !GetAtt DynamoDBTable.Arn
+              - Effect: "Allow"
+                Action:
+                  - "logs:CreateLogGroup"
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                Resource: "arn:aws:logs:*:*:*"
+              - Effect: "Allow"
+                Action:
+                  - "s3:PutObject"
+                Resource: !Sub ${S3Bucket.Arn}/*
+  IamRoleLambdaToRekognition:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: "sts:AssumeRole"
+      Policies:
+        -
+          PolicyName: "lambda-imagerekognition"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "s3:GetObject"
+                  - "dynamodb:UpdateItem"
+                Resource:
+                  - !GetAtt DynamoDBTable.Arn
+                  - !Sub ${S3Bucket.Arn}/*
+              - Effect: "Allow"
+                Action:
+                  - "rekognition:DetectLabels"
+                  - "rekognition:DetectFaces"
+                  - "logs:CreateLogStream"
+                  - "logs:CreateLogGroup"
+                  - "logs:PutLogEvents"
+                Resource: "*"
+Outputs:
+  UserPoolId:
+    Value: !Ref UserPool
+  UserPoolClientId:
+    Value: !Ref UserPoolClient
