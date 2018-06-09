@@ -53,3 +53,13 @@ $ aws s3api put-bucket-notification-configuration \
 > --notification-configuration file://notification.json
 ```
 ### フロントエンドの設定
+src/config.js に API Gateway の ID 、写真格納用の S3 のバケット名、Cognito のプール ID と Client ID を設定する。
+```JavaScript
+export default {
+  Region: 'ap-northeast-1',
+  ApiBaseUrl: 'https://xxxxxxxxxx.execute-api.ap-northeast-1.amazonaws.com/Prod',
+  ImageBaseUrl: 'https://s3-ap-northeast-1.amazonaws.com/<BUCKET_NAME>',
+  UserPoolId: 'ap-northeast-1_xxxxxxxxx',
+  UserPoolClientId: 'xxxxxxxxxxxxxxxxxxxxxxxxxx'
+}
+```
